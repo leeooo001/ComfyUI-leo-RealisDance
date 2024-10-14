@@ -70,6 +70,10 @@ def simple_reader(ref_image, dwpose_path, hamer_path, smpl_path, sample_size, cl
     smpl_reader = VideoReader(smpl_path)
     with open(dwpose_path, 'rb') as pose_file:
         pose_list = pickle.load(pose_file)
+
+    print(len(hamer_reader))
+    print(len(smpl_reader))
+    print(len(pose_list))
     assert len(hamer_reader) == len(smpl_reader) == len(pose_list)
     video_length = len(hamer_reader)
     batch_index = range(0, video_length, 4)[:max_length]
@@ -102,6 +106,25 @@ def simple_reader(ref_image, dwpose_path, hamer_path, smpl_path, sample_size, cl
         smpl.permute(1, 0, 2, 3).unsqueeze(0).contiguous(),
     )
 
+
+def cv2_video2images(video_path):
+    video = cv2.VideoCapture(video_path)
+    video_length = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = video.get(cv2.CAP_PROP_FPS)
+    img_list = []
+    frames=[]
+    count=0
+    while video.isOpened():
+        ret, frame = video.read()
+        frames.append(frame)
+        if not ret:
+            continue
+        count = count + 1
+        if (count > (video_length-1)):
+            video.release()
+            break
+    height,width,_ = frames[0].shape
+    return frames, video_length, fps, width, height
 
 class RealisDanceNode:
     def __init__(self):
@@ -269,9 +292,9 @@ class RealisDanceNode:
         smpl_name = os.path.splitext(os.path.basename(smpl_path))[0]
         output_ref_name = f"d_{dwpose_name}_h_{hamer_name}_s_{smpl_name}"
 
-        sample_path = os.path.join(output_dir,f"sample_{output_ref_name}_.mp4")
+        sample_path = os.path.join(os.path.dirname(smpl_path), output_ref_name)
         save_videos_grid(sample.cpu(),sample_path,fps=fps)
-        ref_path = os.path.join(output_dir,f"{output_ref_name}.mp4")
+        ref_path = sample_path[:-4]+'_grid.mp4'
         save_videos_grid(save_obj, ref_path, fps=fps)
         return (sample_path, ref_path,)
 
@@ -293,26 +316,15 @@ class DWPoseVideoLeo:
 
     def process(self, video_path):
         from annotator.dwpose import DWposeDetector
-        pkl_file = os.path.join(
-            os.path.dirname(video_path),
-            os.path.splitext(os.path.basename(video_path))[0],
-            'dwpose.pkl'
-            )
+        pkl_file = video_path[:-4] + 'dwpose.pkl'
         if not os.path.exists(pkl_file):
             pose = DWposeDetector(os.path.join(package_dir_dir, 'pretrained_models'))
-            cap = cv2.VideoCapture(video_path)
+            imgs, img_length, fps, width, height = cv2_video2images(video_path)
+
             outs = []
-            frameid = 0
-            while(cap.isOpened()):
-                try:
-                    ret, frame = cap.read()
-                    out = pose(frame)
-                    outs.append(out)
-                    frameid += 1
-                    print(frameid)            
-                except:
-                    break
-            cap.release()           
+            for img in tqdm(imgs):
+                out = pose(img)
+                outs.append(out)
             with open(pkl_file, 'wb') as file:
                 pickle.dump(outs, file)
         return (pkl_file, )
